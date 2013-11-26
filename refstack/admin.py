@@ -11,7 +11,9 @@ from .extensions import db
 
 class SecureView(sqla.ModelView):
     def is_accessible(self):
-        return True
+        # let us look at the admin if we're in debug mode
+        if flask.current_app.debug:
+            return True
         return flask.g.user.su is not False
 
 
