@@ -1,6 +1,5 @@
 #
-# Copyright (c) 2013 Piston Cloud Computing, Inc.
-# All Rights Reserved.
+# Copyright (c) 2013 Piston Cloud Computing, Inc. All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -13,54 +12,52 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-import os
-import requests
-from flask import Flask, abort, flash, request, redirect, url_for, \
-    render_template, g, session
-from flask_openid import OpenID
-from flask.ext.admin import Admin, BaseView, expose, AdminIndexView
-from flask.ext.admin.contrib.sqlamodel import ModelView
-from flask.ext.security import Security, SQLAlchemyUserDatastore, \
-    UserMixin, RoleMixin, login_required
-from wtforms import Form, BooleanField, TextField, \
-    PasswordField, validators
+#
+from flask import abort, flash, request, redirect, url_for, \
+    render_template, g, session, flask
+#from flask_openid import OpenID
+#from flask.ext.admin import Admin, BaseView, expose, AdminIndexView
+#from flask.ext.admin.contrib.sqlamodel import ModelView
+#from flask.ext.security import Security, \
+#    UserMixin, login_required
+#from wtforms import TextField
 from flask_mail import Mail
 
-from refstack.app import app 
-from refstack.models import *
+from refstack import app as base_app
+from refstack.extensions import db
+from refstack.extensions import oid
+#from refstack import api
+#from refstack.models import ApiKey
+#from refstack.models import Cloud
+#from refstack.models import Test
+#from refstack.models import TestResults
+#from refstack.models import TestStatus
+from refstack.models import User
+from refstack.models import Vendor
+
+
+# TODO(termie): transition all the routes below to blueprints
+# TODO(termie): use extensions setup from the create_app() call
+
+app = base_app.create_app()
 
 mail = Mail(app)
-
-# setup flask-openid
-oid = OpenID(app)
-admin = Admin(app, base_template='admin/master.html')
-
-
-class SecureView(ModelView):
-    """ """
-    def is_accessible(self):
-        """ """
-        return g.user.su is not False
-
-admin.add_view(SecureView(Vendor, db))
-admin.add_view(SecureView(Cloud, db))
-admin.add_view(SecureView(User, db))
 
 
 @app.before_request
 def before_request():
-    """Runs before the request it self"""
-    g.user = None
+    """Runs before the request itself."""
+    flask.g.user = None
     if 'openid' in session:
-        g.user = User.query.filter_by(openid=session['openid']).first()
+        flask.g.user = User.query.filter_by(openid=session['openid']).first()
 
 
 @app.route('/', methods=['POST', 'GET'])
 def index():
-    """Index view"""
+    """Index view."""
     if g.user is not None:
-        # something else 
-        clouds = Cloud.query.filter_by(user_id=g.user.id).all()
+        # something else
+        clouds = db.Cloud.query.filter_by(user_id=g.user.id).all()
         return render_template('home.html', clouds=clouds)
     else:
         vendors = Vendor.query.all()
@@ -70,15 +67,17 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 @oid.loginhandler
 def login():
-    """Does the login via OpenID.  Has to call into `oid.try_login`
-    to start the OpenID machinery.
+    """Does the login via OpenID.
+
+    Has to call into `oid.try_login` to start the OpenID machinery.
     """
     # if we are already logged in, go back to were we came from
     if g.user is not None:
         return redirect(oid.get_next_url())
-    return oid.try_login("https://login.launchpad.net/",
-                          ask_for=['email', 'nickname'])
-    
+    return oid.try_login(
+        "https://login.launchpad.net/",
+        ask_for=['email', 'nickname'])
+
 
 @oid.after_login
 def create_or_login(resp):
@@ -114,36 +113,38 @@ def create_profile():
             flash(u'Error: you have to enter a valid email address')
         else:
             flash(u'Profile successfully created')
-            db.add(User(name, email, session['openid']))
-            db.commit()
+            db.session.add(User(name, email, session['openid']))
+            db.session.commit()
             return redirect(oid.get_next_url())
     return render_template(
         'create_profile.html', next_url=oid.get_next_url())
 
+
 @app.route('/delete-cloud/<int:cloud_id>', methods=['GET', 'POST'])
 def delete_cloud(cloud_id):
-    """ delete function for clouds"""
-    c = Cloud.query.filter_by(id=cloud_id).first()
+    """Delete function for clouds."""
+    c = db.Cloud.query.filter_by(id=cloud_id).first()
 
     if not c:
         flash(u'Not a valid Cloud ID!')
     elif not c.user_id == g.user.id:
-        flash(u"This isn't your cloud!")         
+        flash(u"This isn't your cloud!")
     else:
-        db.delete(c)
-        db.commit()
+        db.session.delete(c)
+        db.session.commit()
 
     return redirect('/')
 
+
 @app.route('/edit-cloud/<int:cloud_id>', methods=['GET', 'POST'])
 def edit_cloud(cloud_id):
-    c = Cloud.query.filter_by(id=cloud_id).first()
+    c = db.Cloud.query.filter_by(id=cloud_id).first()
 
     if not c:
         flash(u'Not a valid Cloud ID!')
         return redirect('/')
     elif not c.user_id == g.user.id:
-        flash(u"This isn't your cloud!") 
+        flash(u"This isn't your cloud!")
 
     if request.method == 'POST':
         #validate this biotch
@@ -169,8 +170,8 @@ def edit_cloud(cloud_id):
             c.admin_endpoint = request.form['admin_endpoint']
             c.admin_user = request.form['admin_user']
             c.admin_key = request.form['admin_key']
-            
-            db.commit()
+
+            db.session.commit()
 
             flash(u'Cloud Saved!')
             return redirect('/')
@@ -183,15 +184,13 @@ def edit_cloud(cloud_id):
                 admin_user=c.admin_user,
                 admin_key=c.admin_key)
 
-
-
-    return render_template('edit_cloud.html',form=form)
+    return render_template('edit_cloud.html', form=form)
 
 
 @app.route('/create-cloud', methods=['GET', 'POST'])
 def create_cloud():
-    """This is the handler for creating a new cloud"""
-    
+    """This is the handler for creating a new cloud."""
+
     #if g.user is None:
     #    abort(401)
     if request.method == 'POST':
@@ -210,7 +209,7 @@ def create_cloud():
         elif not request.form['admin_key']:
             flash(u'Error: All fields are required')
         else:
-            c = Cloud()
+            c = db.Cloud()
             c.user_id = g.user.id
             c.label = request.form['label']
             c.endpoint = request.form['endpoint']
@@ -220,24 +219,23 @@ def create_cloud():
             c.admin_user = request.form['admin_user']
             c.admin_key = request.form['admin_key']
 
-            db.add(c)
-            db.commit()
+            db.session.add(c)
+            db.session.commit()
             return redirect('/')
 
     return render_template('create_cloud.html', next_url='/')
 
 
-
 @app.route('/profile/edit', methods=['GET', 'POST'])
 def edit_profile():
-    """Updates a profile"""
+    """Updates a profile."""
     if g.user is None:
         abort(401)
     form = dict(name=g.user.name, email=g.user.email)
     if request.method == 'POST':
         if 'delete' in request.form:
-            db.delete(g.user)
-            db.commit()
+            db.session.delete(g.user)
+            db.session.commit()
             session['openid'] = None
             flash(u'Profile deleted')
             return redirect(url_for('index'))
@@ -251,26 +249,23 @@ def edit_profile():
             flash(u'Profile successfully created')
             g.user.name = form['name']
             g.user.email = form['email']
-            db.commit()
+            db.session.commit()
             return redirect(url_for('edit_profile'))
     return render_template('edit_profile.html', form=form)
 
 
 @app.route('/profile', methods=['GET', 'POST'])
 def view_profile():
-    """Updates a profile"""
+    """Updates a profile."""
     if g.user is None:
         abort(401)
-    
+
     return render_template('view_profile.html', user=g.user)
 
 
 @app.route('/logout')
 def logout():
-    """logout route"""
+    """Log out."""
     session.pop('openid', None)
     flash(u'You have been signed out')
     return redirect(oid.get_next_url())
-
-
-
